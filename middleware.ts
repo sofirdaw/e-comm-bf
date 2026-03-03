@@ -1,66 +1,41 @@
-// middleware.ts
-import { NextRequest, NextResponse } from 'next/server'
-import { auth } from '@/lib/auth'
-import jwt from 'jsonwebtoken'
+import { Redis } from '@upstash/redis'
 
-export async function middleware(request: NextRequest) {
-  const pathname = request.nextUrl.pathname
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL!,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+})
 
-  // Routes publiques - pas de protection
-  const publicRoutes = [
-    '/auth/login',
-    '/auth/register',
-    '/admin/login',
-    '/api/auth',
-    '/api/coupons/validate',
-  ]
+// Même API que ton ancien client pour ne rien casser
+export const redisClient = {
+  get: (key: string) => redis.get<string>(key),
 
-  const isPublicRoute = publicRoutes.some(route => pathname.startsWith(route))
-
-  // Si c'est une route publique, laisser passer
-  if (isPublicRoute) {
-    return NextResponse.next()
-  }
-
-  // Protection des routes admin
-  if (pathname.startsWith('/admin') && !pathname.startsWith('/admin/login')) {
-    // Vérifier le token admin JWT
-    const adminToken = request.cookies.get('adminToken')?.value
-
-    if (!adminToken) {
-      // Token absent - rediriger vers login admin
-      return NextResponse.redirect(new URL('/admin/login', request.url))
+  set: async (key: string, value: string, ttl?: number) => {
+    if (ttl) {
+      await redis.setex(key, ttl, value)
+    } else {
+      await redis.set(key, value)
     }
+  },
 
-    try {
-      // Vérifier la signature du token
-      jwt.verify(adminToken, process.env.NEXTAUTH_SECRET || 'your-secret')
-    } catch (error) {
-      // Token invalide ou expiré
-      const response = NextResponse.redirect(new URL('/admin/login', request.url))
-      response.cookies.delete('adminToken')
-      return response
+  del: (key: string) => redis.del(key),
+
+  exists: async (key: string) => {
+    const result = await redis.exists(key)
+    return result === 1
+  },
+
+  invalidatePattern: async (pattern: string) => {
+    const keys = await redis.keys(pattern)
+    if (keys.length > 0) {
+      await Promise.all(keys.map(k => redis.del(k)))
     }
-  }
+  },
 
-  // Protection des routes utilisateur protégées
-  if (pathname.startsWith('/store/account') || pathname.startsWith('/store/orders')) {
-    const session = await auth()
+  flushAll: () => redis.flushdb(),
 
-    if (!session) {
-      return NextResponse.redirect(new URL('/auth/login?callbackUrl=' + pathname, request.url))
-    }
-  }
+  isRedisConnected: () => true, // Upstash HTTP, toujours dispo
 
-  return NextResponse.next()
+  connect: async () => { },    // no-op, plus nécessaire
+  disconnect: async () => { }, // no-op, plus nécessaire
 }
 
-export const config = {
-  matcher: [
-    // Protéger les routes admin
-    '/admin/:path*',
-    // Protéger les routes utilisateur
-    '/store/account/:path*',
-    '/store/orders/:path*',
-  ],
-}
