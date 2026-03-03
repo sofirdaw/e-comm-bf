@@ -1,7 +1,13 @@
 // lib/email.ts
-import { Resend } from 'resend'
+import nodemailer from 'nodemailer'
 
-const resend = new Resend(process.env.RESEND_API_KEY)
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_APP_PASSWORD,
+  },
+})
 
 interface EmailOptions {
   to: string
@@ -10,21 +16,16 @@ interface EmailOptions {
   from?: string
 }
 
-export async function sendEmail({ to, subject, html, from = 'onboarding@resend.dev' }: EmailOptions) {
+export async function sendEmail({ to, subject, html, from }: EmailOptions) {
   try {
-    const { data, error } = await resend.emails.send({
-      from,
+    const info = await transporter.sendMail({
+      from: from || process.env.GMAIL_USER,
       to,
       subject,
       html,
     })
 
-    if (error) {
-      console.error('Email error:', error)
-      return { success: false, error }
-    }
-
-    return { success: true, data }
+    return { success: true, data: info }
   } catch (error) {
     console.error('Email service error:', error)
     return { success: false, error }
